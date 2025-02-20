@@ -1,12 +1,14 @@
 // 游戏配置
 const config = {
-    paddleSpeed: 8,
+    paddleSpeed: 35,
     ballSpeed: 5,
     brickRows: 5,
     brickColumns: 8,
     brickPadding: 10,
     powerUpChance: 0.3, // 道具掉落概率
-    specialBrickChance: 0.2 // 特殊砖块出现概率
+    specialBrickChance: 0.2, // 特殊砖块出现概率
+    touchSensitivity: 2.0, // 触摸灵敏度
+    paddleDampening: 0.95 // 挡板移动阻尼
 };
 
 // 游戏状态
@@ -16,7 +18,21 @@ let gameState = {
     level: 1,
     isRunning: false,
     powerUps: [],
-    activePowerUps: new Set()
+    activePowerUps: new Set(),
+    highScore: parseInt(localStorage.getItem('highScore')) || 0,
+    achievements: (() => {
+        try {
+            const stored = localStorage.getItem('achievements');
+            return new Set(stored ? JSON.parse(stored) : []);
+        } catch (e) {
+            console.warn('无法解析成就数据，重置为空集合');
+            return new Set();
+        }
+    })(),
+    lastTouchX: null,
+    theme: localStorage.getItem('theme') || 'classic',
+    combo: 0, // 连击数
+    maxCombo: 0 // 最大连击数
 };
 
 // 游戏对象
@@ -50,7 +66,8 @@ class Paddle extends GameObject {
     }
 
     move(direction) {
-        const newX = this.x + this.speed * direction;
+        const moveAmount = this.speed * direction * config.paddleDampening;
+        const newX = this.x + moveAmount;
         if (newX >= 0 && newX + this.width <= this.canvas.width) {
             this.x = newX;
         }
@@ -138,7 +155,7 @@ class PowerUp extends GameObject {
         ctx.closePath();
 
         // 绘制道具类型标识
-        ctx.fillStyle = '#000';
+        ctx.fillStyle = this.textColor || '#000';  // 使用主题文字颜色或默认黑色
         ctx.font = '12px Arial';
         ctx.textAlign = 'center';
         const symbol = this.type === 'expand' ? 'E' : 
@@ -157,17 +174,180 @@ class Game {
         this.bricks = [];
         this.setupEventListeners();
         this.initBricks();
+        this.initTheme();
+        this.initAchievements();
+    }
+
+    initTheme() {
+        const themes = {
+            classic: {
+                paddleColor: '#4CAF50',
+                ballColor: '#FFF',
+                brickColor: '#FF4444',
+                specialBrickColor: '#FFD700',
+                powerUpColor: '#00FF00',
+                powerUpTextColor: '#000000',
+                background: 'linear-gradient(to bottom right, #1a1a1a, #4a4a4a)',
+                textColor: '#FFFFFF',
+                buttonBg: '#4CAF50',
+                buttonHover: '#45a049',
+                panelBg: 'rgba(255, 255, 255, 0.1)',
+                canvasBorder: '#FFFFFF'
+            },
+            neon: {
+                paddleColor: '#00ff00',
+                ballColor: '#ff00ff',
+                brickColor: '#00ffff',
+                specialBrickColor: '#ffff00',
+                powerUpColor: '#ff00ff',
+                powerUpTextColor: '#ffffff',
+                background: 'linear-gradient(to bottom right, #000033, #000066)',
+                textColor: '#00ff00',
+                buttonBg: '#ff00ff',
+                buttonHover: '#cc00cc',
+                panelBg: 'rgba(0, 255, 255, 0.1)',
+                canvasBorder: '#00ff00'
+            },
+            retro: {
+                paddleColor: '#8B4513',
+                ballColor: '#DEB887',
+                brickColor: '#A0522D',
+                specialBrickColor: '#DAA520',
+                powerUpColor: '#CD853F',
+                powerUpTextColor: '#000000',
+                background: 'linear-gradient(to bottom right, #2c1810, #5c2820)',
+                textColor: '#DEB887',
+                buttonBg: '#8B4513',
+                buttonHover: '#654321',
+                panelBg: 'rgba(222, 184, 135, 0.1)',
+                canvasBorder: '#DEB887'
+            }
+        };
+
+        const applyTheme = (themeName) => {
+            const theme = themes[themeName] || themes.classic;
+            
+            // 更新CSS变量
+            document.documentElement.style.setProperty('--text-color', theme.textColor);
+            document.documentElement.style.setProperty('--button-bg', theme.buttonBg);
+            document.documentElement.style.setProperty('--button-hover', theme.buttonHover);
+            document.documentElement.style.setProperty('--panel-bg', theme.panelBg);
+            
+            // 更新游戏对象颜色
+            document.body.style.background = theme.background;
+            
+            // 更新挡板颜色
+            this.paddle.color = theme.paddleColor;
+            
+            // 更新球的颜色
+            this.balls.forEach(ball => ball.color = theme.ballColor);
+            
+            // 更新砖块颜色
+            this.bricks.forEach(brick => {
+                brick.color = brick.isSpecial ? theme.specialBrickColor : theme.brickColor;
+            });
+            
+            // 更新道具颜色
+            gameState.powerUps.forEach(powerUp => {
+                powerUp.color = theme.powerUpColor;
+                powerUp.textColor = theme.powerUpTextColor;
+            });
+            
+            // 更新画布边框颜色
+            document.getElementById('gameCanvas').style.borderColor = theme.canvasBorder;
+            
+            // 更新DOM元素样式
+            document.body.className = `theme-${themeName}`;
+            gameState.theme = themeName;
+            localStorage.setItem('theme', themeName);
+            
+            // 更新主题按钮文本
+            const themeNames = {
+                classic: '经典主题',
+                neon: '霓虹主题',
+                retro: '复古主题'
+            };
+            document.getElementById('themeButton').textContent = `当前主题: ${themeNames[themeName]}`;
+        };
+
+        applyTheme(gameState.theme);
+        
+        document.getElementById('themeButton').addEventListener('click', () => {
+            const currentTheme = gameState.theme;
+            const themeNames = Object.keys(themes);
+            const nextThemeIndex = (themeNames.indexOf(currentTheme) + 1) % themeNames.length;
+            applyTheme(themeNames[nextThemeIndex]);
+        });
+    }
+
+    initAchievements() {
+        const achievementsPanel = document.getElementById('achievements');
+        document.getElementById('achievementButton').addEventListener('click', () => {
+            achievementsPanel.style.display = achievementsPanel.style.display === 'none' ? 'block' : 'none';
+        });
+
+        // 初始化已解锁的成就
+        gameState.achievements.forEach(id => {
+            document.querySelector(`[data-id="${id}"]`)?.classList.add('unlocked');
+        });
+
+        // 点击其他区域关闭成就面板
+        document.addEventListener('click', (e) => {
+            if (!achievementsPanel.contains(e.target) && 
+                e.target.id !== 'achievementButton') {
+                achievementsPanel.style.display = 'none';
+            }
+        });
     }
 
     setupEventListeners() {
+        // 键盘控制
         document.addEventListener('keydown', (e) => {
             if (!gameState.isRunning) return;
             if (e.key === 'ArrowLeft') this.paddle.move(-1);
             if (e.key === 'ArrowRight') this.paddle.move(1);
         });
 
+        // 触摸控制
+        this.canvas.addEventListener('touchstart', (e) => {
+            if (!gameState.isRunning) return;
+            e.preventDefault();
+            gameState.lastTouchX = e.touches[0].clientX;
+        }, { passive: false });
+
+        this.canvas.addEventListener('touchmove', (e) => {
+            if (!gameState.isRunning || gameState.lastTouchX === null) return;
+            e.preventDefault();
+            const touchX = e.touches[0].clientX;
+            const deltaX = (touchX - gameState.lastTouchX) * config.touchSensitivity;
+            this.paddle.move(deltaX / config.paddleSpeed);
+            gameState.lastTouchX = touchX;
+        }, { passive: false });
+
+        this.canvas.addEventListener('touchend', () => {
+            gameState.lastTouchX = null;
+        });
+
+        // 移动端按钮控制
+        document.getElementById('leftButton')?.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            if (!gameState.isRunning) return;
+            const moveInterval = setInterval(() => this.paddle.move(-1), 16);
+            const stopMove = () => clearInterval(moveInterval);
+            e.target.addEventListener('touchend', stopMove, { once: true });
+        });
+
+        document.getElementById('rightButton')?.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            if (!gameState.isRunning) return;
+            const moveInterval = setInterval(() => this.paddle.move(1), 16);
+            const stopMove = () => clearInterval(moveInterval);
+            e.target.addEventListener('touchend', stopMove, { once: true });
+        });
+
         document.getElementById('startButton').addEventListener('click', () => {
             if (!gameState.isRunning) {
+                this.resetGame();
                 gameState.isRunning = true;
                 this.gameLoop();
             }
@@ -224,8 +404,42 @@ class Game {
         setTimeout(() => document.getElementById('powerupText').textContent = '', 3000);
     }
 
+    checkAchievements() {
+        const achievements = [
+            { id: 'firstWin', condition: () => gameState.level > 1, name: '初次胜利', desc: '通过第一关' },
+            { id: 'highScore1000', condition: () => gameState.score >= 1000, name: '分数达人', desc: '获得1000分' },
+            { id: 'multiPowerup', condition: () => gameState.activePowerUps.size >= 2, name: '能量叠加', desc: '同时激活2个道具' },
+            { id: 'level5', condition: () => gameState.level >= 5, name: '闯关高手', desc: '达到第5关' },
+            { id: 'combo10', condition: () => gameState.combo >= 10, name: '连击大师', desc: '达成10连击' },
+            { id: 'perfectClear', condition: () => gameState.lives === 3 && gameState.level > 1, name: '完美通关', desc: '不损失生命值通过一关' },
+            { id: 'speedMaster', condition: () => config.ballSpeed >= 8, name: '速度大师', desc: '在高速模式下完成一关' },
+            { id: 'powerupCollector', condition: () => gameState.powerUps.length >= 5, name: '道具收集者', desc: '同时拥有5个道具' }
+        ];
+
+        achievements.forEach(achievement => {
+            if (!gameState.achievements.has(achievement.id) && achievement.condition()) {
+                gameState.achievements.add(achievement.id);
+                const achievementElement = document.querySelector(`[data-id="${achievement.id}"]`);
+                if (achievementElement) {
+                    achievementElement.classList.add('unlocked');
+                    achievementElement.title = `${achievement.name}: ${achievement.desc}`;
+                }
+                // 显示成就解锁提示
+                const notification = document.createElement('div');
+                notification.className = 'achievement-notification';
+                notification.textContent = `解锁成就：${achievement.name}`;
+                document.body.appendChild(notification);
+                setTimeout(() => notification.remove(), 3000);
+                localStorage.setItem('achievements', JSON.stringify([...gameState.achievements]));
+            }
+        });
+    }
+
     update() {
         if (!gameState.isRunning) return;
+
+        // 检查成就
+        this.checkAchievements();
 
         // 更新球的位置
         this.balls.forEach((ball, index) => {
@@ -246,6 +460,11 @@ class Game {
                     document.getElementById('lives').textContent = gameState.lives;
                     if (gameState.lives <= 0) {
                         gameState.isRunning = false;
+                        if (gameState.score > gameState.highScore) {
+                            gameState.highScore = gameState.score;
+                            localStorage.setItem('highScore', gameState.highScore);
+                            document.getElementById('highScore').textContent = gameState.highScore;
+                        }
                         alert('游戏结束！最终得分: ' + gameState.score);
                         this.resetGame();
                         return;
@@ -335,4 +554,5 @@ class Game {
 // 初始化游戏
 window.onload = () => {
     new Game();
+    document.getElementById('highScore').textContent = gameState.highScore;
 };
