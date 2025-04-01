@@ -195,8 +195,8 @@ function saveGameState() {
 
 // 生成道具
 function spawnPowerup(x, y) {
-    const powerupTypes = Object.keys(powerupTypes);
-    const randomPowerup = powerupTypes[Math.floor(Math.random() * powerupTypes.length)];
+    const powerupTypeKeys = Object.keys(powerupTypes);
+    const randomPowerup = powerupTypeKeys[Math.floor(Math.random() * powerupTypeKeys.length)];
     
     powerups.push({
         x: x,
